@@ -66,6 +66,11 @@ problems, and the kit works around each one:
 - **Log of the last launch:** `~/Library/Logs/mii-workbench.log`. The first line shows
   which Java ran, and `Picked up JAVA_TOOL_OPTIONS` shows the right-click fix loaded.
 - **Jar downloads fail:** check the VPN, or a proxy that intercepts TLS, first.
+- **Disk use:** the launcher log is overwritten on every launch, and OpenWebStart's own
+  logging stays off. If the downloaded Workbench jars in `~/.cache/icedtea-web/cache` pass
+  500 MB, the launcher clears them (set `MII_CACHE_MAX_MB` to change the limit). The
+  Workbench's Java (~360 MB) lives in `~/.cache/icedtea-web/jvm-cache`. The log notes when
+  older copies pile up there; remove them in *OpenWebStart Settings*.
 - **Start by hand:** `~/bin/mii-workbench ~/Downloads/Workbench.jsp`
 - **Optional: SapMachine 11 instead of Zulu 8:**
   ```bash

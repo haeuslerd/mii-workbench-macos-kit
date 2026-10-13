@@ -33,6 +33,21 @@ OUT="$CACHE/Workbench-fixed.jnlp"
 [ -f "$SRC" ]      || { echo "No JNLP at $SRC — download a fresh one from MII first."; exit 1; }
 [ -x "$OWS_JVM" ]  || { echo "Java 8 missing at $OWS_JVM"; exit 1; }
 
+# Disk guard. The jar cache grows with every MII server and Workbench update; past
+# MII_CACHE_MAX_MB (default 500) clear it, and OWS re-downloads what it needs. Skipped
+# while a Workbench is running, since it reads jars from that cache.
+JAR_CACHE="$HOME/.cache/icedtea-web/cache"
+if [ -d "$JAR_CACHE" ] && ! pgrep -f 'icedtea-web/jvm-cache/.*/bin/java' >/dev/null; then
+    used_mb=$(( $(du -sk "$JAR_CACHE" | cut -f1) / 1024 ))
+    if [ "$used_mb" -gt "${MII_CACHE_MAX_MB:-500}" ]; then
+        rm -rf "$JAR_CACHE"
+        echo "  cleared jar cache (${used_mb} MB > ${MII_CACHE_MAX_MB:-500} MB): first start downloads again"
+    fi
+fi
+# OWS keeps every Java it downloads under jvm-cache (~360 MB each); only report it
+JVMS_CACHED=$(find "$HOME/.cache/icedtea-web/jvm-cache" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+[ "${JVMS_CACHED:-0}" -gt 1 ] && echo "  note: $JVMS_CACHED JVMs in ~/.cache/icedtea-web/jvm-cache, remove old ones via 'OpenWebStart Settings'"
+
 python3 - "$SRC" "$EXTDIR" "$OUT" <<'PY'
 import re, os, sys, urllib.request
 src_path, extdir, out_path = sys.argv[1:4]
