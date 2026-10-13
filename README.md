@@ -63,6 +63,11 @@ problems, and the kit works around each one:
 
 ## Troubleshooting
 
+- **"MII Workbench did not start" alert:** the launcher checks the download before
+  starting and says what is wrong: the MII server can't be reached (connect to the
+  company network or VPN), the logon ticket has expired (download a fresh
+  `Workbench.jsp`), or Java or OpenWebStart is missing (run `./install.sh` again). The
+  `Workbench.jsp` is kept when a launch fails.
 - **Log of the last launch:** `~/Library/Logs/mii-workbench.log`. The first line shows
   which Java ran, and `Picked up JAVA_TOOL_OPTIONS` shows the right-click fix loaded.
 - **Jar downloads fail:** check the VPN, or a proxy that intercepts TLS, first.

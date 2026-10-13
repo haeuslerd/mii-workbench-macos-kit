@@ -10,6 +10,21 @@
 #     -> fetch those extension JNLPs, add the trailing slash, use local copies.
 set -euo pipefail
 
+# Show why a launch failed. A double-click runs this script in the background, so without
+# an alert the Workbench just never appears. From a terminal the message is enough.
+fail() {
+    echo "ERROR: $1" >&2
+    if [ ! -t 2 ]; then
+        osascript - "$1" >/dev/null 2>&1 <<'AS' || true
+on run argv
+    display alert "MII Workbench did not start" message (item 1 of argv) as critical
+end run
+AS
+    fi
+    exit 1
+}
+trap 'fail "Unexpected error (line $LINENO). Details: ~/Library/Logs/mii-workbench.log"' ERR
+
 SRC="${1:-$HOME/Downloads/Workbench.jsp}"
 # JVM that runs OpenWebStart itself. Pick with ~/.config/mii-workbench/java
 # (one word: zulu8 | sapmachine11) or MII_JAVA=...; default zulu8.
@@ -30,8 +45,10 @@ CACHE="$HOME/Library/Caches/mii-workbench"
 EXTDIR="$CACHE/mii-ext"
 OUT="$CACHE/Workbench-fixed.jnlp"
 
-[ -f "$SRC" ]      || { echo "No JNLP at $SRC — download a fresh one from MII first."; exit 1; }
-[ -x "$OWS_JVM" ]  || { echo "Java 8 missing at $OWS_JVM"; exit 1; }
+[ -f "$SRC" ]      || fail "No Workbench.jsp at $SRC. Download a fresh one from MII first."
+[ -x "$OWS_JVM" ]  || fail "Java 8 is missing ($OWS_JVM). Run install.sh from the kit again."
+[ -f /Applications/OpenWebStart/openwebstart.jar ] || fail "OpenWebStart is missing. Run install.sh from the kit again."
+grep -q '<jnlp' "$SRC" || fail "$(basename "$SRC") is not a Workbench launcher (no <jnlp> inside). Download it again from the MII menu."
 
 # Disk guard. The jar cache grows with every MII server and Workbench update; past
 # MII_CACHE_MAX_MB (default 500) clear it, and OWS re-downloads what it needs. Skipped
@@ -45,12 +62,35 @@ if [ -d "$JAR_CACHE" ] && ! pgrep -f 'icedtea-web/jvm-cache/.*/bin/java' >/dev/n
     fi
 fi
 # OWS keeps every Java it downloads under jvm-cache (~360 MB each); only report it
-JVMS_CACHED=$(find "$HOME/.cache/icedtea-web/jvm-cache" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+# (on a fresh Mac jvm-cache does not exist yet: find fails, which must not stop the launch)
+JVMS_CACHED=$( { find "$HOME/.cache/icedtea-web/jvm-cache" -mindepth 1 -maxdepth 1 -type d 2>/dev/null || true; } | wc -l | tr -d ' ')
 [ "${JVMS_CACHED:-0}" -gt 1 ] && echo "  note: $JVMS_CACHED JVMs in ~/.cache/icedtea-web/jvm-cache, remove old ones via 'OpenWebStart Settings'"
 
-python3 - "$SRC" "$EXTDIR" "$OUT" <<'PY'
-import re, os, sys, urllib.request
-src_path, extdir, out_path = sys.argv[1:4]
+mkdir -p "$CACHE"
+ERRFILE="$CACHE/last-error.txt"
+rm -f "$ERRFILE"
+if ! python3 - "$SRC" "$EXTDIR" "$OUT" "$ERRFILE" <<'PY'
+import re, os, sys, urllib.request, urllib.error, urllib.parse
+src_path, extdir, out_path, err_path = sys.argv[1:5]
+
+def die(msg):
+    open(err_path, "w", encoding="utf-8").write(msg)
+    sys.exit(3)
+
+def fetch(href):
+    host = urllib.parse.urlsplit(href).netloc
+    try:
+        with urllib.request.urlopen(href, timeout=30) as r:
+            return r.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            die("The MII server %s refused the request (HTTP %d): the logon ticket in this "
+                "Workbench.jsp has probably expired. Download a fresh one from MII." % (host, e.code))
+        die("The MII server %s answered HTTP %d for %s." % (host, e.code, href.rsplit("/", 1)[-1]))
+    except (urllib.error.URLError, OSError) as e:
+        die("Cannot reach the MII server %s. Are you on the company network or VPN? (%s)"
+            % (host, getattr(e, "reason", e)))
+
 src = open(src_path, encoding="utf-8").read()
 os.makedirs(extdir, exist_ok=True)
 
@@ -60,8 +100,10 @@ for href in hrefs:
     name = href.rsplit("/", 1)[-1]
     if name in seen:
         continue
-    with urllib.request.urlopen(href, timeout=30) as r:
-        text = r.read().decode("utf-8")
+    text = fetch(href)
+    if "<jnlp" not in text:
+        die("The MII server sent a page instead of %s, which usually means the logon "
+            "ticket has expired. Download a fresh Workbench.jsp from MII." % name)
     # the actual bug: codebase without trailing slash loses the port
     text = re.sub(r'codebase="(http://[^"]*?)/?"', lambda m: 'codebase="%s/"' % m.group(1), text)
     open(os.path.join(extdir, name), "w", encoding="utf-8").write(text)
@@ -76,6 +118,9 @@ open(out_path, "w", encoding="utf-8").write(
     re.sub(r'<extension\b[^>]*href="([^"]+)"[^>]*/>', repoint, src))
 print("  wrote", out_path)
 PY
+then
+    fail "$(cat "$ERRFILE" 2>/dev/null || echo "Preparing the Workbench launch failed. Details: ~/Library/Logs/mii-workbench.log")"
+fi
 
 # The patched copy in $CACHE is all OWS needs, so remove the download: it holds a logon
 # ticket and session cookies. Older Workbench*.jsp downloads go too (their tickets expire).
