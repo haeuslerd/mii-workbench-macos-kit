@@ -1,0 +1,80 @@
+#!/bin/bash
+# Launch SAP MII Workbench on macOS via OpenWebStart.
+# Usage: mii-workbench [path/to/Workbench.jsp]   (default: ~/Downloads/Workbench.jsp)
+#
+# Works around two problems:
+#  1. OpenWebStart 1.14 links against sun.awt.AppContext, which JDK 16+ blocks
+#     -> run OWS itself on a Java 8 JVM.
+#  2. MII's extension JNLPs declare codebase WITHOUT a trailing slash, and
+#     IcedTea-Web then drops the :50000 port and fetches jars from :80.
+#     -> fetch those extension JNLPs, add the trailing slash, use local copies.
+set -euo pipefail
+
+SRC="${1:-$HOME/Downloads/Workbench.jsp}"
+# JVM that runs OpenWebStart itself. Pick with ~/.config/mii-workbench/java
+# (one word: zulu8 | sapmachine11) or MII_JAVA=...; default zulu8.
+#   zulu8        native Apple Silicon Java 8   (brew install --cask zulu@8)
+#   sapmachine11 native Apple Silicon Java 11  (brew install --cask sap/sapmachine/sapmachine11-jdk)
+# Java 16+ cannot work (OWS crash above); Java 24+ removed the SecurityManager.
+JVMS=/Library/Java/JavaVirtualMachines
+CHOICE="${MII_JAVA:-$(cat "$HOME/.config/mii-workbench/java" 2>/dev/null || echo zulu8)}"
+case "$CHOICE" in
+    sapmachine11) OWS_JVM="$JVMS/sapmachine-11.jdk/Contents/Home/bin/java" ;;
+    *)            OWS_JVM="$JVMS/zulu-8.jdk/Contents/Home/bin/java" ;;
+esac
+# fall back to Zulu 8 if the chosen JVM is not installed
+[ -x "$OWS_JVM" ] || OWS_JVM="$JVMS/zulu-8.jdk/Contents/Home/bin/java"
+echo "Using Java: $OWS_JVM"
+# generated files: regenerated on every launch, kept out of ~/Downloads
+CACHE="$HOME/Library/Caches/mii-workbench"
+EXTDIR="$CACHE/mii-ext"
+OUT="$CACHE/Workbench-fixed.jnlp"
+
+[ -f "$SRC" ]      || { echo "No JNLP at $SRC — download a fresh one from MII first."; exit 1; }
+[ -x "$OWS_JVM" ]  || { echo "Java 8 missing at $OWS_JVM"; exit 1; }
+
+python3 - "$SRC" "$EXTDIR" "$OUT" <<'PY'
+import re, os, sys, urllib.request
+src_path, extdir, out_path = sys.argv[1:4]
+src = open(src_path, encoding="utf-8").read()
+os.makedirs(extdir, exist_ok=True)
+
+hrefs = re.findall(r'<extension\b[^>]*href="([^"]+)"', src)
+seen = {}
+for href in hrefs:
+    name = href.rsplit("/", 1)[-1]
+    if name in seen:
+        continue
+    with urllib.request.urlopen(href, timeout=30) as r:
+        text = r.read().decode("utf-8")
+    # the actual bug: codebase without trailing slash loses the port
+    text = re.sub(r'codebase="(http://[^"]*?)/?"', lambda m: 'codebase="%s/"' % m.group(1), text)
+    open(os.path.join(extdir, name), "w", encoding="utf-8").write(text)
+    seen[name] = True
+    print("  patched", name)
+
+def repoint(m):
+    name = m.group(1).rsplit("/", 1)[-1]
+    return m.group(0).replace(m.group(1), "file://" + extdir + "/" + name) if name in seen else m.group(0)
+
+open(out_path, "w", encoding="utf-8").write(
+    re.sub(r'<extension\b[^>]*href="([^"]+)"[^>]*/>', repoint, src))
+print("  wrote", out_path)
+PY
+
+echo "Launching Workbench (a security dialog will appear — accept it)..."
+# Java 9+ only: open the internal AWT classes OWS uses (Java 8 rejects these flags)
+JFLAGS=()
+"$OWS_JVM" -version 2>&1 | grep -q '"1\.8' || JFLAGS=(--add-exports=java.desktop/sun.awt=ALL-UNNAMED
+    --add-opens=java.desktop/sun.awt=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED)
+# Right-click fix: Workbench opens its tree context menu only on a *released* popup
+# trigger (Windows behaviour); macOS flags the *press*. This agent moves the flag.
+# JAVA_TOOL_OPTIONS is inherited by the Workbench JVM that OWS spawns.
+# Source: ~/.config/mii-workbench/PopupTriggerFix.java
+POPUP_FIX="$HOME/.config/mii-workbench/mac-popup-fix.jar"
+# The agent also names the Workbench JVM "MII Workbench" in the Dock and sets this icon.
+DOCK_ICON=/Applications/OpenWebStart/Icon-512.png
+[ -f "$POPUP_FIX" ] && export JAVA_TOOL_OPTIONS="-javaagent:$POPUP_FIX=$DOCK_ICON${JAVA_TOOL_OPTIONS:+ $JAVA_TOOL_OPTIONS}"
+# This launcher JVM only waits for the Workbench JVM: keep it out of the Dock.
+exec "$OWS_JVM" -Dapple.awt.UIElement=true ${JFLAGS[@]+"${JFLAGS[@]}"} -cp /Applications/OpenWebStart/openwebstart.jar \
+    com.openwebstart.launcher.PhaseTwoWebStartLauncher "$OUT"

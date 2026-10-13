@@ -1,0 +1,7 @@
+# MII launch files embed a logon ticket and session cookies: never commit them
+*.jsp
+*.jnlp
+# build output
+*.jar
+*.class
+.DS_Store
