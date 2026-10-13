@@ -1,7 +1,7 @@
 # SAP MII Workbench on macOS
 
 Sets up an Apple Silicon Mac so that a `Workbench.jsp` downloaded from SAP MII opens
-the MII Workbench **with a double-click**, like on Windows.
+the MII Workbench.
 
 ## Before you start
 
