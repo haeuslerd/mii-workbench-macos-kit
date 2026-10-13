@@ -38,8 +38,10 @@ Running it again is safe.
 3. Answer **Yes** to every security prompt. If you say No, parts of the Workbench
    (e.g. the actions add-on) don't load.
 
-Each `Workbench.jsp` contains a logon ticket that is valid for about 8 hours. If the
-Workbench won't start, download a fresh one.
+Each `Workbench.jsp` contains a logon ticket that is valid for about 8 hours, so the
+launcher **deletes it from Downloads** once it has read it (older `Workbench*.jsp`
+downloads too). To relaunch, download a fresh one from MII. To keep the files, start
+with `MII_KEEP_JSP=1 ~/bin/mii-workbench`.
 
 If macOS shows *"Apple could not verify … is free of malware"*, click **Done**, never
 *Move to Trash*. The Workbench still opens.

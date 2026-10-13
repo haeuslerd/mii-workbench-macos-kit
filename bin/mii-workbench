@@ -62,6 +62,15 @@ open(out_path, "w", encoding="utf-8").write(
 print("  wrote", out_path)
 PY
 
+# The patched copy in $CACHE is all OWS needs, so remove the download: it holds a logon
+# ticket and session cookies. Older Workbench*.jsp downloads go too (their tickets expire).
+# Set MII_KEEP_JSP=1 to keep them.
+if [ "${MII_KEEP_JSP:-0}" != 1 ]; then
+    rm -f -- "$SRC"
+    find "$HOME/Downloads" -maxdepth 1 -type f -name 'Workbench*.jsp' -delete 2>/dev/null || true
+    echo "  removed $SRC"
+fi
+
 echo "Launching Workbench (a security dialog will appear — accept it)..."
 # Java 9+ only: open the internal AWT classes OWS uses (Java 8 rejects these flags)
 JFLAGS=()
